@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Orthobello — Reporting NP/ORX</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+  :root {
+    --blue: #2563eb; --blue-light: rgba(37,99,235,0.12);
+    --green: #16a34a; --green-light: rgba(22,163,74,0.12);
+    --amber: #d97706; --red: #dc2626;
+    --gray-50: #f9fafb; --gray-100: #f3f4f6; --gray-200: #e5e7eb;
+    --gray-600: #4b5563; --gray-800: #1f2937; --gray-900: #111827;
+    --border: #e5e7eb; --radius: 10px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--gray-50); color: var(--gray-800); font-size: 14px; }
+
+  header { background: white; border-bottom: 1px solid var(--border); padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 10; }
+  .logo { font-size: 16px; font-weight: 600; color: var(--gray-900); }
+  .logo span { color: var(--blue); }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .last-updated { font-size: 12px; color: var(--gray-600); }
+  .btn-refresh { background: var(--gray-100); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; color: var(--gray-600); }
+  .btn-refresh:hover { background: var(--gray-200); }
+
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px; }
+
+  .warning-bar { background: #fef3c7; border: 1px solid #f59e0b; border-radius: var(--radius); padding: 12px 16px; margin-bottom: 20px; font-size: 13px; color: #92400e; display: none; }
+  .warning-bar.alert { background: #fee2e2; border-color: #ef4444; color: #7f1d1d; }
+  .warning-bar.visible { display: block; }
+
+  .kpi-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-bottom: 24px; }
+  @media(min-width:600px){ .kpi-grid { grid-template-columns: repeat(4, 1fr); } }
+
+  .kpi { background: white; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+  .kpi-label { font-size: 11px; color: var(--gray-600); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+  .kpi-value { font-size: 28px; font-weight: 700; line-height: 1; margin-bottom: 4px; }
+  .kpi-sub { font-size: 12px; color: var(--gray-600); }
+  .kpi-delta { font-size: 12px; margin-top: 6px; }
+  .kpi-delta.up { color: var(--green); }
+  .kpi-delta.down { color: var(--red); }
+  .kpi-delta.neutral { color: var(--gray-600); }
+  .kpi.np .kpi-value { color: var(--blue); }
+  .kpi.orx .kpi-value { color: var(--green); }
+  .kpi.np-sub .kpi-value, .kpi.orx-sub .kpi-value { font-size: 20px; color: var(--gray-800); }
+
+  .charts-grid { display: grid; grid-template-columns: 1fr; gap: 20px; margin-bottom: 24px; }
+  @media(min-width:700px){ .charts-grid { grid-template-columns: 2fr 1fr; } }
+
+  .card { background: white; border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
+  .card-title { font-size: 13px; font-weight: 600; color: var(--gray-800); margin-bottom: 16px; }
+  .card-title span { font-weight: 400; color: var(--gray-600); font-size: 12px; }
+  .chart-wrap { position: relative; height: 220px; }
+
+  .pipeline-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+  @media(max-width:600px){ .pipeline-grid { grid-template-columns: 1fr; } }
+  .pipeline-wrap { position: relative; height: 180px; }
+
+  .compare-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .compare-table th { text-align: left; padding: 8px 12px; background: var(--gray-50); color: var(--gray-600); font-weight: 500; border-bottom: 1px solid var(--border); }
+  .compare-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  .compare-table tr:last-child td { border-bottom: none; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+  .tag.up { background: #dcfce7; color: #166534; }
+  .tag.down { background: #fee2e2; color: #991b1b; }
+  .tag.neutral { background: var(--gray-100); color: var(--gray-600); }
+
+  .loading { text-align: center; padding: 60px; color: var(--gray-600); font-size: 14px; }
+  .site-tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+  .site-tab { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: white; font-size: 12px; cursor: pointer; color: var(--gray-600); }
+  .site-tab.active { background: var(--blue); border-color: var(--blue); color: white; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">Ortho<span>bello</span> — NP/ORX</div>
+  <div class="header-right">
+    <span class="last-updated" id="lastUpdated">Chargement...</span>
+    <button class="btn-refresh" onclick="loadData()">↻ Actualiser</button>
+  </div>
+</header>
+
+<main>
+  <div id="warningBar" class="warning-bar"></div>
+
+  <div class="site-tabs">
+    <button class="site-tab active" onclick="setView('all')">Tous sites</button>
+    <button class="site-tab" onclick="setView('wat')">Waterloo</button>
+    <button class="site-tab" onclick="setView('bxl')">Bruxelles</button>
+  </div>
+
+  <div id="kpiGrid" class="kpi-grid">
+    <div class="kpi np"><div class="kpi-label">NP Total</div><div class="kpi-value" id="npTotal">—</div><div class="kpi-sub" id="npSub">—</div><div class="kpi-delta" id="npDelta"></div></div>
+    <div class="kpi orx"><div class="kpi-label">ORX Total</div><div class="kpi-value" id="orxTotal">—</div><div class="kpi-sub" id="orxSub">—</div><div class="kpi-delta" id="orxDelta"></div></div>
+    <div class="kpi np-sub"><div class="kpi-label">NP vs A-1</div><div class="kpi-value" id="npVsLY">—</div><div class="kpi-sub" id="npVsLYDate">—</div></div>
+    <div class="kpi orx-sub"><div class="kpi-label">ORX vs A-1</div><div class="kpi-value" id="orxVsLY">—</div><div class="kpi-sub" id="orxVsLYDate">—</div></div>
+  </div>
+
+  <div class="charts-grid">
+    <div class="card">
+      <div class="card-title">Tendance <span>12 dernières périodes</span></div>
+      <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Répartition <span>dernière période</span></div>
+      <div class="chart-wrap"><canvas id="splitChart"></canvas></div>
+    </div>
+  </div>
+
+  <div class="pipeline-grid">
+    <div class="card">
+      <div class="card-title">Pipeline NP <span>12 mois à venir</span></div>
+      <div class="pipeline-wrap"><canvas id="npPipeChart"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Pipeline ORX <span>12 mois à venir</span></div>
+      <div class="pipeline-wrap"><canvas id="orxPipeChart"></canvas></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Comparaison périodes <span>actuelles vs A-1</span></div>
+    <table class="compare-table" id="compareTable">
+      <tr><th>Métrique</th><th>Actuel</th><th>A-1</th><th>Variation</th></tr>
+    </table>
+  </div>
+</main>
+
+<script>
+const DATA_URL = 'https://raw.githubusercontent.com/Adri6-D/orthobello-reporting/main/data.json';
+let currentView = 'all';
+let appData = null;
+let charts = {};
+
+// Fallback data (last entries from historical CSV)
+const FALLBACK = {
+  lastUpdated: '2026-06-01',
+  history: [
+    {date:'2025-09-02',npTotal:150,npWat:77,npBxl:73,orxTotal:56,orxWat:41,orxBxl:15},
+    {date:'2025-09-15',npTotal:142,npWat:68,npBxl:74,orxTotal:49,orxWat:32,orxBxl:17},
+    {date:'2025-10-01',npTotal:154,npWat:77,npBxl:77,orxTotal:50,orxWat:37,orxBxl:13},
+    {date:'2025-10-15',npTotal:166,npWat:85,npBxl:81,orxTotal:48,orxWat:31,orxBxl:17},
+    {date:'2025-11-03',npTotal:154,npWat:84,npBxl:70,orxTotal:47,orxWat:26,orxBxl:21},
+    {date:'2025-11-17',npTotal:177,npWat:102,npBxl:75,orxTotal:57,orxWat:35,orxBxl:22},
+    {date:'2025-12-01',npTotal:175,npWat:106,npBxl:69,orxTotal:59,orxWat:37,orxBxl:22},
+    {date:'2025-12-15',npTotal:164,npWat:95,npBxl:69,orxTotal:58,orxWat:36,orxBxl:22},
+    {date:'2026-01-15',npTotal:166,npWat:84,npBxl:82,orxTotal:57,orxWat:34,orxBxl:23},
+    {date:'2026-02-23',npTotal:164,npWat:89,npBxl:75,orxTotal:68,orxWat:39,orxBxl:29},
+    {date:'2026-04-15',npTotal:131,npWat:63,npBxl:68,orxTotal:72,orxWat:41,orxBxl:31},
+    {date:'2026-06-01',npTotal:134,npWat:70,npBxl:64,orxTotal:77,orxWat:46,orxBxl:31}
+  ],
+  latestNP: {
+    reporting_date:'2026-06-01',total:134,wat_total:70,bxl_total:64,
+    m01_label:'Jun-26',m01_total:18,m01_wat:11,m01_bxl:7,
+    m02_label:'Jul-26',m02_total:12,m02_wat:7,m02_bxl:5,
+    m03_label:'Aug-26',m03_total:8,m03_wat:4,m03_bxl:4,
+    m04_label:'Sep-26',m04_total:9,m04_wat:5,m04_bxl:4,
+    m05_label:'Oct-26',m05_total:6,m05_wat:3,m05_bxl:3,
+    m06_label:'Nov-26',m06_total:4,m06_wat:2,m06_bxl:2,
+    m07_label:'Dec-26',m07_total:3,m07_wat:2,m07_bxl:1,
+    m08_label:'Jan-27',m08_total:0,m08_wat:0,m08_bxl:0,
+    m09_label:'Feb-27',m09_total:0,m09_wat:0,m09_bxl:0,
+    m10_label:'Mar-27',m10_total:0,m10_wat:0,m10_bxl:0,
+    m11_label:'Apr-27',m11_total:0,m11_wat:0,m11_bxl:0,
+    m12_label:'May-27',m12_total:0,m12_wat:0,m12_bxl:0
+  },
+  latestORX: {
+    reporting_date:'2026-06-01',total:77,wat_total:46,bxl_total:31,
+    m01_label:'Jun-26',m01_total:16,m01_wat:10,m01_bxl:6,
+    m02_label:'Jul-26',m02_total:13,m02_wat:8,m02_bxl:5,
+    m03_label:'Aug-26',m03_total:9,m03_wat:5,m03_bxl:4,
+    m04_label:'Sep-26',m04_total:14,m04_wat:9,m04_bxl:5,
+    m05_label:'Oct-26',m05_total:8,m05_wat:5,m05_bxl:3,
+    m06_label:'Nov-26',m06_total:5,m06_wat:3,m06_bxl:2,
+    m07_label:'Dec-26',m07_total:4,m07_wat:3,m07_bxl:1,
+    m08_label:'Jan-27',m08_total:0,m08_wat:0,m08_bxl:0,
+    m09_label:'Feb-27',m09_total:0,m09_wat:0,m09_bxl:0,
+    m10_label:'Mar-27',m10_total:0,m10_wat:0,m10_bxl:0,
+    m11_label:'Apr-27',m11_total:0,m11_wat:0,m11_bxl:0,
+    m12_label:'May-27',m12_total:0,m12_wat:0,m12_bxl:0
+  }
+};
+
+function setView(v) {
+  currentView = v;
+  document.querySelectorAll('.site-tab').forEach(t => t.classList.remove('active'));
+  event.target.classList.add('active');
+  if (appData) render(appData);
+}
+
+function getValues(d, view) {
+  if (view === 'wat') return { np: d.npWat, orx: d.orxWat };
+  if (view === 'bxl') return { np: d.npBxl, orx: d.orxBxl };
+  return { np: d.npTotal, orx: d.orxTotal };
+}
+
+function getPipeValues(row, type, view) {
+  const vals = [];
+  const labels = [];
+  for (let m = 1; m <= 12; m++) {
+    const p = String(m).padStart(2,'0');
+    labels.push(row[`m${p}_label`] || '');
+    const total = row[`m${p}_total`] || 0;
+    const wat   = row[`m${p}_wat`]   || 0;
+    const bxl   = row[`m${p}_bxl`]  || 0;
+    if (view === 'wat') vals.push(wat);
+    else if (view === 'bxl') vals.push(bxl);
+    else vals.push(total);
+  }
+  return { labels, vals };
+}
+
+function sgn(n) { return (n > 0 ? '+' : '') + n; }
+function fmtDate(s) {
+  if (!s) return '—';
+  const p = s.split('-');
+  if (p.length === 3) return p[2]+'/'+p[1]+'/'+p[0];
+  return s;
+}
+function deltaTag(n) {
+  if (n === null || n === undefined) return '';
+  const cls = n > 0 ? 'up' : n < 0 ? 'down' : 'neutral';
+  return `<span class="tag ${cls}">${sgn(n)}</span>`;
+}
+
+function destroyChart(id) {
+  if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+}
+
+function render(data) {
+  const history = data.history || [];
+  const last = history[history.length - 1];
+  if (!last) return;
+
+  const v = getValues(last, currentView);
+  const prev = history.length > 1 ? getValues(history[history.length - 2], currentView) : null;
+
+  // Find A-1 entry
+  const lastDate = new Date(last.date);
+  const lyTarget = new Date(lastDate.getFullYear()-1, lastDate.getMonth(), lastDate.getDate());
+  let lyEntry = null, minDiff = Infinity;
+  for (const h of history) {
+    const d = new Date(h.date);
+    const diff = Math.abs(d - lyTarget);
+    if (diff < minDiff) { minDiff = diff; lyEntry = h; }
+  }
+  const lyVals = lyEntry ? getValues(lyEntry, currentView) : null;
+
+  // Warning bar
+  const wb = document.getElementById('warningBar');
+  const npFlag = v.np < 110 ? 'red' : v.np < 130 ? 'amber' : null;
+  const orxFlag = v.orx < 40 ? 'red' : v.orx < 50 ? 'amber' : null;
+  if (npFlag || orxFlag) {
+    const msgs = [];
+    if (npFlag === 'red') msgs.push('⚠️ NP en alerte critique : ' + v.np);
+    else if (npFlag === 'amber') msgs.push('⚠️ NP sous seuil d\'attention : ' + v.np);
+    if (orxFlag === 'red') msgs.push('⚠️ ORX en alerte critique : ' + v.orx);
+    else if (orxFlag === 'amber') msgs.push('⚠️ ORX sous seuil d\'attention : ' + v.orx);
+    wb.textContent = msgs.join(' — ');
+    wb.className = 'warning-bar visible' + (npFlag === 'red' || orxFlag === 'red' ? ' alert' : '');
+  } else {
+    wb.className = 'warning-bar';
+  }
+
+  // KPIs
+  const subLabel = currentView === 'all' ? 'Wat: ' + last.npWat + ' · Bxl: ' + last.npBxl
+                 : currentView === 'wat' ? 'Site Waterloo' : 'Site Bruxelles';
+  const orxSubLabel = currentView === 'all' ? 'Wat: ' + last.orxWat + ' · Bxl: ' + last.orxBxl
+                    : currentView === 'wat' ? 'Site Waterloo' : 'Site Bruxelles';
+
+  document.getElementById('npTotal').textContent = v.np;
+  document.getElementById('npSub').textContent = currentView === 'all' ? 'Wat: ' + last.npWat + ' · Bxl: ' + last.npBxl : '';
+  document.getElementById('orxTotal').textContent = v.orx;
+  document.getElementById('orxSub').textContent = currentView === 'all' ? 'Wat: ' + last.orxWat + ' · Bxl: ' + last.orxBxl : '';
+
+  if (prev) {
+    const npD = v.np - prev.np;
+    const orxD = v.orx - prev.orx;
+    const npEl = document.getElementById('npDelta');
+    npEl.innerHTML = 'vs préc.: ' + (npD >= 0 ? '+' : '') + npD;
+    npEl.className = 'kpi-delta ' + (npD > 0 ? 'up' : npD < 0 ? 'down' : 'neutral');
+    const orxEl = document.getElementById('orxDelta');
+    orxEl.innerHTML = 'vs préc.: ' + (orxD >= 0 ? '+' : '') + orxD;
+    orxEl.className = 'kpi-delta ' + (orxD > 0 ? 'up' : orxD < 0 ? 'down' : 'neutral');
+  }
+
+  if (lyVals) {
+    const npLY = v.np - lyVals.np;
+    const orxLY = v.orx - lyVals.orx;
+    const npLYEl = document.getElementById('npVsLY');
+    npLYEl.textContent = (npLY >= 0 ? '+' : '') + npLY;
+    npLYEl.style.color = npLY >= 0 ? 'var(--green)' : 'var(--red)';
+    document.getElementById('npVsLYDate').textContent = fmtDate(lyEntry.date);
+    const orxLYEl = document.getElementById('orxVsLY');
+    orxLYEl.textContent = (orxLY >= 0 ? '+' : '') + orxLY;
+    orxLYEl.style.color = orxLY >= 0 ? 'var(--green)' : 'var(--red)';
+    document.getElementById('orxVsLYDate').textContent = fmtDate(lyEntry.date);
+  }
+
+  // Last updated
+  document.getElementById('lastUpdated').textContent = 'Mis à jour : ' + fmtDate(data.lastUpdated || last.date);
+
+  // === Trend Chart ===
+  const trend12 = history.slice(-12);
+  const tLabels = trend12.map(h => fmtDate(h.date).slice(0,5));
+  const tNP  = trend12.map(h => getValues(h, currentView).np);
+  const tORX = trend12.map(h => getValues(h, currentView).orx);
+
+  destroyChart('trend');
+  charts.trend = new Chart(document.getElementById('trendChart'), {
+    type: 'line',
+    data: {
+      labels: tLabels,
+      datasets: [
+        { label: 'NP',  data: tNP,  borderColor: 'rgb(37,99,235)',  backgroundColor: 'rgba(37,99,235,0.08)',  fill: true, tension: 0.3, pointRadius: 3, yAxisID: 'yNP',  borderWidth: 2 },
+        { label: 'ORX', data: tORX, borderColor: 'rgb(22,163,74)',  backgroundColor: 'rgba(22,163,74,0.08)',  fill: true, tension: 0.3, pointRadius: 3, yAxisID: 'yORX', borderWidth: 2 }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { position: 'top', labels: { font: { size: 11 }, boxWidth: 12 } } },
+      scales: {
+        yNP:  { type: 'linear', position: 'left',  title: { display: true, text: 'NP', font: { size: 10 } }, grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { font: { size: 10 } } },
+        yORX: { type: 'linear', position: 'right', title: { display: true, text: 'ORX', font: { size: 10 } }, grid: { drawOnChartArea: false }, ticks: { font: { size: 10 } } },
+        x: { ticks: { font: { size: 10 }, maxRotation: 30 }, grid: { display: false } }
+      }
+    }
+  });
+
+  // === Split Donut ===
+  destroyChart('split');
+  charts.split = new Chart(document.getElementById('splitChart'), {
+    type: 'doughnut',
+    data: {
+      labels: ['NP Waterloo', 'NP Bruxelles', 'ORX Waterloo', 'ORX Bruxelles'],
+      datasets: [{ data: [last.npWat, last.npBxl, last.orxWat, last.orxBxl], backgroundColor: ['#3b82f6','#93c5fd','#22c55e','#86efac'], borderWidth: 2, borderColor: 'white' }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom', labels: { font: { size: 10 }, boxWidth: 12 } } }
+    }
+  });
+
+  // === Pipeline charts ===
+  const npPipe = data.latestNP || null;
+  const orxPipe = data.latestORX || null;
+
+  if (npPipe) {
+    const { labels: pLabels, vals: pVals } = getPipeValues(npPipe, 'NP', currentView);
+    destroyChart('npPipe');
+    charts.npPipe = new Chart(document.getElementById('npPipeChart'), {
+      type: 'bar',
+      data: { labels: pLabels, datasets: [{ label: 'NP', data: pVals, backgroundColor: 'rgba(37,99,235,0.7)', borderRadius: 4 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { x: { ticks: { font: { size: 9 } }, grid: { display: false } }, y: { ticks: { font: { size: 10 } }, grid: { color: 'rgba(0,0,0,0.05)' } } }
+      }
+    });
+  }
+
+  if (orxPipe) {
+    const { labels: oLabels, vals: oVals } = getPipeValues(orxPipe, 'ORX', currentView);
+    destroyChart('orxPipe');
+    charts.orxPipe = new Chart(document.getElementById('orxPipeChart'), {
+      type: 'bar',
+      data: { labels: oLabels, datasets: [{ label: 'ORX', data: oVals, backgroundColor: 'rgba(22,163,74,0.7)', borderRadius: 4 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { x: { ticks: { font: { size: 9 } }, grid: { display: false } }, y: { ticks: { font: { size: 10 } }, grid: { color: 'rgba(0,0,0,0.05)' } } }
+      }
+    });
+  }
+
+  // === Comparison table ===
+  const tbl = document.getElementById('compareTable');
+  const lyDate = lyEntry ? fmtDate(lyEntry.date) : '—';
+  const rows = [
+    ['NP Total', v.np, lyVals ? lyVals.np : '—', lyVals ? v.np - lyVals.np : null],
+    ['ORX Total', v.orx, lyVals ? lyVals.orx : '—', lyVals ? v.orx - lyVals.orx : null],
+  ];
+  if (currentView === 'all') {
+    rows.push(['NP Waterloo', last.npWat, lyEntry ? lyEntry.npWat : '—', lyEntry ? last.npWat - lyEntry.npWat : null]);
+    rows.push(['NP Bruxelles', last.npBxl, lyEntry ? lyEntry.npBxl : '—', lyEntry ? last.npBxl - lyEntry.npBxl : null]);
+    rows.push(['ORX Waterloo', last.orxWat, lyEntry ? lyEntry.orxWat : '—', lyEntry ? last.orxWat - lyEntry.orxWat : null]);
+    rows.push(['ORX Bruxelles', last.orxBxl, lyEntry ? lyEntry.orxBxl : '—', lyEntry ? last.orxBxl - lyEntry.orxBxl : null]);
+  }
+  tbl.innerHTML = `<tr><th>Métrique</th><th>Actuel (${fmtDate(last.date)})</th><th>A-1 (${lyDate})</th><th>Variation</th></tr>` +
+    rows.map(([label, cur, ly, delta]) =>
+      `<tr><td>${label}</td><td><strong>${cur}</strong></td><td>${ly}</td><td>${delta !== null ? deltaTag(delta) : '—'}</td></tr>`
+    ).join('');
+}
+
+async function loadData() {
+  document.getElementById('lastUpdated').textContent = 'Chargement...';
+  try {
+    const res = await fetch(DATA_URL + '?t=' + Date.now());
+    if (!res.ok) throw new Error('not found');
+    appData = await res.json();
+  } catch(e) {
+    appData = FALLBACK;
+    document.getElementById('lastUpdated').textContent = 'Données de démonstration';
+  }
+  render(appData);
+}
+
+loadData();
+</script>
+</body>
+</html>
