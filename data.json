@@ -1,5 +1,5 @@
 {
-  "lastUpdated": "2026-06-15",
+  "lastUpdated": "2026-06-16",
   "history": [
     {
       "date": "2022-01-01",
@@ -929,33 +929,33 @@
       "orxBxl": 31
     },
     {
-      "date": "2026-06-15",
-      "npTotal": 130,
-      "npWat": 62,
-      "npBxl": 68,
+      "date": "2026-06-16",
+      "npTotal": 136,
+      "npWat": 66,
+      "npBxl": 70,
       "orxTotal": 73,
       "orxWat": 42,
       "orxBxl": 31
     }
   ],
   "latestNP": {
-    "reporting_date": "2026-06-15",
+    "reporting_date": "2026-06-16",
     "m01_label": "Jun-26",
-    "m01_total": 26,
-    "m01_wat": 19,
+    "m01_total": 27,
+    "m01_wat": 20,
     "m01_bxl": 7,
     "m02_label": "Jul-26",
-    "m02_total": 45,
-    "m02_wat": 28,
+    "m02_total": 48,
+    "m02_wat": 31,
     "m02_bxl": 17,
     "m03_label": "Aug-26",
     "m03_total": 19,
     "m03_wat": 7,
     "m03_bxl": 12,
     "m04_label": "Sep-26",
-    "m04_total": 25,
+    "m04_total": 27,
     "m04_wat": 3,
-    "m04_bxl": 22,
+    "m04_bxl": 24,
     "m05_label": "Oct-26",
     "m05_total": 9,
     "m05_wat": 1,
@@ -988,12 +988,12 @@
     "m12_total": 0,
     "m12_wat": 0,
     "m12_bxl": 0,
-    "total": 130,
-    "wat_total": 62,
-    "bxl_total": 68
+    "total": 136,
+    "wat_total": 66,
+    "bxl_total": 70
   },
   "latestORX": {
-    "reporting_date": "2026-06-15",
+    "reporting_date": "2026-06-16",
     "m01_label": "Jun-26",
     "m01_total": 5,
     "m01_wat": 4,
