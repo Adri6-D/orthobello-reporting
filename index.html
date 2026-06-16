@@ -27,9 +27,22 @@
 
   main { max-width: 1100px; margin: 0 auto; padding: 24px 16px; }
 
-  .warning-bar { background: #fef3c7; border: 1px solid #f59e0b; border-radius: var(--radius); padding: 12px 16px; margin-bottom: 20px; font-size: 13px; color: #92400e; display: none; }
-  .warning-bar.alert { background: #fee2e2; border-color: #ef4444; color: #7f1d1d; }
+  .warning-bar { border-radius: var(--radius); padding: 12px 16px; margin-bottom: 20px; font-size: 13px; line-height: 1.5; display: none; }
   .warning-bar.visible { display: block; }
+  /* ok = vert doux, amber = ambre doux (à surveiller), alert = rouge (action) */
+  .warning-bar.ok    { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
+  .warning-bar.amber { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
+  .warning-bar.alert { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+  .warning-bar strong { font-weight: 600; }
+
+  /* Carte Lecture & axes d'amélioration */
+  .insights-card { margin-bottom: 24px; }
+  .insights-list { list-style: none; display: flex; flex-direction: column; gap: 12px; }
+  .insight { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; line-height: 1.5; }
+  .insight .ic { flex-shrink: 0; width: 20px; text-align: center; font-size: 15px; line-height: 1.4; }
+  .insight .it { color: var(--gray-800); }
+  .insight .it .act { display: block; color: var(--gray-600); font-size: 12px; margin-top: 2px; }
+  .insight .it b { font-weight: 600; color: var(--gray-900); }
 
   .kpi-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-bottom: 24px; }
   @media(min-width:600px){ .kpi-grid { grid-template-columns: repeat(4, 1fr); } }
@@ -98,6 +111,11 @@
     <div class="kpi orx-sub"><div class="kpi-label">ORX vs A-1</div><div class="kpi-value" id="orxVsLY">—</div><div class="kpi-sub" id="orxVsLYDate">—</div></div>
   </div>
 
+  <div class="card insights-card" id="insightsCard" style="display:none">
+    <div class="card-title">Lecture de la période <span>& axes d'amélioration</span></div>
+    <ul class="insights-list" id="insightsList"></ul>
+  </div>
+
   <div class="charts-grid">
     <div class="card">
       <div class="card-title">Tendance <span>12 dernières périodes</span></div>
@@ -129,7 +147,8 @@
 </main>
 
 <script>
-const DATA_URL = 'https://raw.githubusercontent.com/Adri6-D/orthobello-reporting/main/data.json';
+// Chargé en relatif depuis GitHub Pages (./data.json poussé par n8n)
+const DATA_URL = './data.json';
 let currentView = 'all';
 let appData = null;
 let charts = {};
@@ -229,6 +248,165 @@ function destroyChart(id) {
   if (charts[id]) { charts[id].destroy(); delete charts[id]; }
 }
 
+// ============================================================
+//  Modèle de seuils SAISONNIERS
+//  Plutôt qu'un seuil absolu (130 en juillet ≠ 130 en novembre),
+//  on compare chaque période à l'attendu de sa saison :
+//   1. facteur saisonnier par mois = moy. du mois / moy. globale
+//   2. niveau récent désaisonnalisé = médiane des 6 dernières
+//      périodes (valeur / facteur du mois)
+//   3. attendu = niveau récent × facteur du mois courant
+//   4. écart = (réel - attendu) / attendu
+//  Un plancher absolu reste comme filet de sécurité.
+// ============================================================
+const SEAS_N = 6; // périodes récentes pour le niveau désaisonnalisé
+// Planchers absolus (redAbs / softFloor) = garde-fous métier sur le TOTAL.
+// En vue par site, on s'appuie uniquement sur l'écart saisonnier (les
+// volumes par site ~moitié du total, un plancher fixe n'aurait pas de sens).
+const CFG = {
+  np:  { amberDev: -0.10, redDev: -0.20, redAbs: 115 },
+  orx: { amberDev: -0.10, redDev: -0.20, softFloor: 50, redAbs: 45 }
+};
+
+function monthOf(s) { return parseInt(s.slice(5, 7), 10); }
+function median(a) {
+  const s = [...a].sort((x, y) => x - y), n = s.length;
+  if (!n) return null;
+  return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2;
+}
+
+function seasonalFactors(history, accessor) {
+  const vals = history.map(accessor).filter(v => v > 0);
+  if (!vals.length) return null;
+  const global = vals.reduce((a, b) => a + b, 0) / vals.length;
+  const bym = {};
+  history.forEach(h => { const v = accessor(h); if (v > 0) (bym[monthOf(h.date)] ||= []).push(v); });
+  const factor = {};
+  for (let m = 1; m <= 12; m++) {
+    factor[m] = bym[m] ? (bym[m].reduce((a, b) => a + b, 0) / bym[m].length) / global : 1;
+  }
+  return { global, factor };
+}
+
+function expectedAt(history, idx, accessor, seas) {
+  const prior = history.slice(Math.max(0, idx - SEAS_N), idx);
+  const lvls = prior.map(h => { const v = accessor(h); return v > 0 ? v / (seas.factor[monthOf(h.date)] || 1) : null; })
+                    .filter(v => v != null);
+  if (!lvls.length) return null;
+  return median(lvls) * (seas.factor[monthOf(history[idx].date)] || 1);
+}
+
+// Évalue la dernière période d'une série -> { actual, expected, dev, level }
+// applyFloors=true seulement en vue globale (planchers absolus = garde-fou total)
+function assess(history, accessor, cfg, metric, applyFloors) {
+  const seas = seasonalFactors(history, accessor);
+  const idx = history.length - 1;
+  const actual = accessor(history[idx]);
+  const expected = seas ? expectedAt(history, idx, accessor, seas) : null;
+  const dev = (expected && expected > 0) ? (actual - expected) / expected : null;
+  let level = 'ok';
+  if (metric === 'np') {
+    const redByAbs = applyFloors && dev != null && dev <= cfg.redDev && actual < cfg.redAbs;
+    const redByDev = !applyFloors && dev != null && dev <= cfg.redDev;
+    if (redByAbs || redByDev) level = 'red';
+    else if (dev != null && dev <= cfg.amberDev) level = 'amber';
+  } else {
+    if (applyFloors && actual < cfg.redAbs) level = 'red';
+    else if (!applyFloors && dev != null && dev <= cfg.redDev) level = 'red';
+    else if ((dev != null && dev <= cfg.amberDev) || (applyFloors && actual < cfg.softFloor)) level = 'amber';
+  }
+  return { actual, expected, dev, level, factor: seas ? seas.factor[monthOf(history[idx].date)] : 1 };
+}
+
+function npAccessor(view) {
+  return view === 'wat' ? (h => h.npWat) : view === 'bxl' ? (h => h.npBxl) : (h => h.npTotal);
+}
+function orxAccessor(view) {
+  return view === 'wat' ? (h => h.orxWat) : view === 'bxl' ? (h => h.orxBxl) : (h => h.orxTotal);
+}
+function pct(x) { return (x >= 0 ? '+' : '') + Math.round(x * 100) + '%'; }
+
+// Construit la liste d'insights / axes d'amélioration depuis les données
+function buildInsights(data, view, npA, orxA) {
+  const history = data.history || [];
+  const last = history[history.length - 1];
+  const ins = [];
+  const npAcc = npAccessor(view), orxAcc = orxAccessor(view);
+
+  // 1. Statut NP vs attendu saisonnier
+  if (npA.expected) {
+    if (npA.level === 'ok') {
+      ins.push({ ic: '✅', text: `<b>NP dans la norme de saison</b> (${npA.actual}, attendu ~${Math.round(npA.expected)}).` });
+    } else {
+      const tone = npA.level === 'red' ? '🔴' : '🟡';
+      ins.push({ ic: tone,
+        text: `<b>NP à ${npA.actual}</b> — ${pct(npA.dev)} vs l'attendu de saison (~${Math.round(npA.expected)}).`,
+        act: npA.level === 'red'
+          ? `Action : intensifier l'acquisition (campagnes, relances) et vérifier la disponibilité d'agenda court terme.`
+          : `Piste : surveiller la prochaine période ; un coup de pouce acquisition sur le site le plus bas peut suffire.` });
+    }
+  }
+
+  // 2. Tendance courte (3 dernières variations NP)
+  const recent = history.slice(-4).map(npAcc);
+  if (recent.length === 4) {
+    const slope = recent[3] - recent[0];
+    const rel = recent[0] ? slope / recent[0] : 0;
+    if (rel <= -0.08) ins.push({ ic: '📉', text: `<b>NP en repli sur 3 périodes</b> (${recent[0]} → ${recent[3]}).`,
+      act: `Regarder ce qui a changé côté flux entrants (saisonnalité, budget pub, délais de RDV).` });
+    else if (rel >= 0.08) ins.push({ ic: '📈', text: `<b>NP en progression sur 3 périodes</b> (${recent[0]} → ${recent[3]}).`,
+      act: `Capitaliser : maintenir l'effort d'acquisition qui fonctionne.` });
+  }
+
+  // 3. Contexte saisonnier
+  if (npA.factor <= 0.92) ins.push({ ic: '🗓️', text: `<b>Période creuse</b> côté NP (saison à ${pct(npA.factor - 1)} de la moyenne). Un léger repli est normal ici.` });
+  else if (npA.factor >= 1.08) ins.push({ ic: '🗓️', text: `<b>Haute saison NP</b> (saison à ${pct(npA.factor - 1)} de la moyenne) — moment clé pour pousser la conversion.` });
+
+  // 4. Déséquilibre entre sites (vue globale uniquement)
+  if (view === 'all' && last.npTotal > 0) {
+    const watShare = last.npWat / last.npTotal;
+    const histShare = median(history.filter(h => h.npTotal > 0).map(h => h.npWat / h.npTotal));
+    if (histShare != null && Math.abs(watShare - histShare) >= 0.08) {
+      const low = watShare < histShare ? 'Waterloo' : 'Bruxelles';
+      ins.push({ ic: '⚖️', text: `<b>${low} sous sa part habituelle</b> de NP cette période (Wat ${last.npWat} / Bxl ${last.npBxl}).`,
+        act: `Cibler l'acquisition sur ${low} pour rééquilibrer.` });
+    }
+  }
+
+  // 5. Pipeline des prochains mois (sur latestNP du site courant)
+  const np = data.latestNP;
+  if (np) {
+    const key = view === 'wat' ? 'wat' : view === 'bxl' ? 'bxl' : 'total';
+    const next3 = [1, 2, 3].map(m => np[`m0${m}_${key}`] || 0);
+    const sum3 = next3.reduce((a, b) => a + b, 0);
+    if (sum3 < 30) ins.push({ ic: '🔭', text: `<b>Agenda des 3 prochains mois encore léger</b> (${sum3} NP positionnés).`,
+      act: `Anticiper la prise de RDV pour remplir les semaines à venir.` });
+  }
+
+  // 6. Ratio NP -> ORX (proxy de conversion)
+  if (view === 'all') {
+    const ratio = last.npTotal ? last.orxTotal / last.npTotal : null;
+    const histRatio = median(history.filter(h => h.npTotal > 0 && h.orxTotal > 0).map(h => h.orxTotal / h.npTotal));
+    if (ratio != null && histRatio != null && ratio < histRatio * 0.85) {
+      ins.push({ ic: '🔄', text: `<b>Conversion NP → ORX en deçà de l'habitude</b> (${(ratio * 100).toFixed(0)}% vs ~${(histRatio * 100).toFixed(0)}%).`,
+        act: `Travailler le suivi des premiers RDV pour transformer davantage en traitements.` });
+    }
+  }
+
+  return ins.slice(0, 5);
+}
+
+function renderInsights(data, view, npA, orxA) {
+  const card = document.getElementById('insightsCard');
+  const listEl = document.getElementById('insightsList');
+  const ins = buildInsights(data, view, npA, orxA);
+  if (!ins.length) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  listEl.innerHTML = ins.map(i =>
+    `<li class="insight"><span class="ic">${i.ic}</span><span class="it">${i.text}${i.act ? `<span class="act">${i.act}</span>` : ''}</span></li>`
+  ).join('');
+}
+
 function render(data) {
   const history = data.history || [];
   const last = history[history.length - 1];
@@ -248,21 +426,33 @@ function render(data) {
   }
   const lyVals = lyEntry ? getValues(lyEntry, currentView) : null;
 
-  // Warning bar
+  // === Évaluation saisonnière + bandeau (ton factuel, non alarmiste) ===
+  const useFloors = currentView === 'all';
+  const npA  = assess(history, npAccessor(currentView),  CFG.np,  'np',  useFloors);
+  const orxA = assess(history, orxAccessor(currentView), CFG.orx, 'orx', useFloors);
+
   const wb = document.getElementById('warningBar');
-  const npFlag = v.np < 110 ? 'red' : v.np < 130 ? 'amber' : null;
-  const orxFlag = v.orx < 40 ? 'red' : v.orx < 50 ? 'amber' : null;
-  if (npFlag || orxFlag) {
-    const msgs = [];
-    if (npFlag === 'red') msgs.push('⚠️ NP en alerte critique : ' + v.np);
-    else if (npFlag === 'amber') msgs.push('⚠️ NP sous seuil d\'attention : ' + v.np);
-    if (orxFlag === 'red') msgs.push('⚠️ ORX en alerte critique : ' + v.orx);
-    else if (orxFlag === 'amber') msgs.push('⚠️ ORX sous seuil d\'attention : ' + v.orx);
-    wb.textContent = msgs.join(' — ');
-    wb.className = 'warning-bar visible' + (npFlag === 'red' || orxFlag === 'red' ? ' alert' : '');
-  } else {
-    wb.className = 'warning-bar';
+  const worst = (npA.level === 'red' || orxA.level === 'red') ? 'red'
+              : (npA.level === 'amber' || orxA.level === 'amber') ? 'amber' : 'ok';
+  const parts = [];
+  if (npA.level !== 'ok') {
+    const w = npA.level === 'red' ? 'nettement sous' : 'un peu sous';
+    parts.push(`<strong>NP ${npA.actual}</strong> — ${w} l'attendu de saison (~${Math.round(npA.expected)}, ${pct(npA.dev)})`);
   }
+  if (orxA.level !== 'ok') {
+    const w = orxA.level === 'red' ? 'sous le plancher' : 'à surveiller';
+    parts.push(`<strong>ORX ${orxA.actual}</strong> — ${w}${orxA.expected ? ` (attendu ~${Math.round(orxA.expected)})` : ''}`);
+  }
+  if (worst === 'ok') {
+    wb.innerHTML = `✅ Indicateurs dans la norme saisonnière — <strong>NP ${npA.actual}</strong>, <strong>ORX ${orxA.actual}</strong>. Détail et pistes ci-dessous.`;
+  } else {
+    const lead = worst === 'red' ? '🔴 Point d\'attention' : '🟡 À surveiller';
+    wb.innerHTML = `${lead} : ${parts.join(' · ')}. Voir les axes d'amélioration ci-dessous.`;
+  }
+  wb.className = 'warning-bar visible ' + worst;
+
+  // Lecture & axes d'amélioration
+  renderInsights(data, currentView, npA, orxA);
 
   // KPIs
   const subLabel = currentView === 'all' ? 'Wat: ' + last.npWat + ' · Bxl: ' + last.npBxl
