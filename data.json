@@ -1,5 +1,5 @@
 {
-  "lastUpdated": "2026-06-15",
+  "lastUpdated": "2026-06-16",
   "history": [
     {
       "date": "2022-01-01",
@@ -929,7 +929,7 @@
       "orxBxl": 31
     },
     {
-      "date": "2026-06-15",
+      "date": "2026-06-16",
       "npTotal": 130,
       "npWat": 62,
       "npBxl": 68,
@@ -939,7 +939,7 @@
     }
   ],
   "latestNP": {
-    "reporting_date": "2026-06-15",
+    "reporting_date": "2026-06-16",
     "m01_label": "Jun-26",
     "m01_total": 26,
     "m01_wat": 19,
@@ -993,7 +993,7 @@
     "bxl_total": 68
   },
   "latestORX": {
-    "reporting_date": "2026-06-15",
+    "reporting_date": "2026-06-16",
     "m01_label": "Jun-26",
     "m01_total": 5,
     "m01_wat": 4,
