@@ -939,12 +939,12 @@
     },
     {
       "date": "2026-07-01",
-      "npTotal": 0,
-      "npWat": 0,
-      "npBxl": 0,
-      "orxTotal": 0,
-      "orxWat": 0,
-      "orxBxl": 0
+      "npTotal": 134,
+      "npWat": 66,
+      "npBxl": 68,
+      "orxTotal": 75,
+      "orxWat": 43,
+      "orxBxl": 32
     }
   ],
   "latestNP": {
